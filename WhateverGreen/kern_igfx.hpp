@@ -69,6 +69,7 @@ private:
 			uint8_t FPFBTTArrayHDMIAddr         :1;
 			uint8_t FPFSliceCount               :1;
 			uint8_t FPFEuCount                  :1;
+			uint8_t EDIDOverride				:1;
 		} bits;
 		uint32_t value;
 	};
@@ -234,6 +235,11 @@ private:
 	 *  Original IGMappedBuffer::getGPUVirtualAddress function
 	 */
 	mach_vm_address_t orgIgBufferGetGpuVirtualAddress {};
+	
+	/**
+	 *	Original check EDID function
+	 */
+	mach_vm_address_t orgEDIDCheck {};
 
 	/**
 	 *  Original AppleIntelFramebufferController::ReadRegister32 function
@@ -566,6 +572,21 @@ private:
 	 *  Apply DP to HDMI automatic connector type changes
 	 */
 	void applyHdmiAutopatch();
+	
+	/**
+	 *	Turn on EDID Injection
+	 */
+	bool cflEDIDInject {false};
+	
+	/**
+	 *	Read EDID from config
+	 */
+	bool cflEDIDRead {false};
+	
+	/**
+	 *	Wrap EDID Check
+	 */
+	static int wrapEDIDCheck(IOService*, unsigned int, unsigned char*);
 };
 
 #endif /* kern_igfx_hpp */

@@ -160,6 +160,11 @@ void IGFX::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			dumpPlatformTable = true;
 #endif
 
+		// Enable CFL EDID injection only on laptops and macOS Mojave and up!
+		if (checkKernelArgument("-edid")){
+			cflEDIDInject = true;
+		}
+		
 		// Enable CFL backlight patch on mobile CFL or if IGPU propery enable-cfl-backlight-fix is set
 		int bkl = currentFramebuffer == &kextIntelCFLFb && WIOKit::getComputerModel() == WIOKit::ComputerModel::ComputerLaptop;
 		bkl |= info->videoBuiltin->getProperty("enable-cfl-backlight-fix") != nullptr;
@@ -311,6 +316,12 @@ bool IGFX::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t a
 				KernelPatcher::RouteRequest request("__ZN31AppleIntelFramebufferController16ComputeLaneCountEPK29IODetailedTimingInformationV2jjPj", wrapComputeLaneCount, orgComputeLaneCount);
 				patcher.routeMultiple(index, &request, 1, address, size);
 			}
+		}
+		
+		if (cflEDIDInject){
+			SYSLOG("igfx", "CFL EDID patch requested, initializing patches..");
+			KernelPatcher::RouteRequest request("__ZN21AppleIntelFramebuffer20checkForEDIDOverrideEjPh", wrapEDIDCheck, orgEDIDCheck);
+			patcher.routeMultiple(index, &request, 1, address, size);
 		}
 
 		if (applyFramebufferPatch || dumpFramebufferToDisk || dumpPlatformTable || hdmiAutopatch) {
@@ -936,6 +947,63 @@ void IGFX::writePlatformListData(const char *subKeyName) {
 	}
 }
 #endif
+
+// CFL EDID patch
+int IGFX::wrapEDIDCheck(IOService *that, unsigned int x, unsigned char *buff){
+	DBGLOG("igfx", "WRAP EDID called. Preparing for injection...");
+	
+	int framebufferIndex = *(int*) ((char*)that + 0x1dc); // This is not the index that will be patched.
+	
+	int retVal = 0, standardEDIDLen = 128;
+	
+	if (callbackIGFX->orgEDIDCheck){
+		retVal = FunctionCast(wrapEDIDCheck, callbackIGFX->orgEDIDCheck) (that, x, buff);
+	}
+	
+	// Read override EDID to inject from properties if not done so already
+	if (!callbackIGFX->cflEDIDRead){
+		callbackIGFX->framebufferPatchFlags.bits.EDIDOverride = 0;
+		IOService *igpu = that->getProvider();
+		if (igpu){
+			auto EDIDData = OSDynamicCast(OSData, igpu->getProperty("edid-override"));
+			uint8_t EDIDIndex = WIOKit::getOSDataValue<uint32_t>(igpu, "edid-override-index", callbackIGFX->framebufferPatch.overrideEDIDIndex);
+			if (EDIDData && EDIDIndex){
+				if (EDIDData->getLength() == standardEDIDLen){
+					callbackIGFX->framebufferPatchFlags.bits.EDIDOverride = 1;
+					uint8_t *pd = (uint8_t*)EDIDData->getBytesNoCopy();
+					for(int i = 0; i < standardEDIDLen; i++){ // EDID data is always 128 Bytes long
+						callbackIGFX->framebufferPatch.overrideEDID[i] = pd[i];
+					}
+					DBGLOG("igfx", "Successfully acquired and read the EDID");
+				}
+				else {
+					DBGLOG("igfx", "EDID data was of excessive size: %d bytes", EDIDData->getLength());
+				}
+			}
+			callbackIGFX->cflEDIDRead = true;
+		}
+	}
+	else {
+		DBGLOG("igfx", "EDID data already read. No need to read again.");
+	}
+	
+	// If EDID is read, patch the selected connector.
+	if (callbackIGFX->framebufferPatchFlags.bits.EDIDOverride){
+		if (framebufferIndex == callbackIGFX->framebufferPatch.overrideEDIDIndex){
+			DBGLOG("igfx", "Starting to patch connector for index: %d", framebufferIndex);
+			for (int i = 0; i < standardEDIDLen; i++) {
+				buff[i] = callbackIGFX->framebufferPatch.overrideEDID[i];
+			}
+			DBGLOG("igfx", "Successfully patched connector %d for EDID", framebufferIndex);
+			return 0;
+		}
+	}
+	else {
+		DBGLOG("igfx", "edid-override property not found in config.");
+	}
+	
+	return retVal;
+}
 
 void IGFX::eraseCoverageInstPrefix(mach_vm_address_t addr, size_t count) {
 	static constexpr uint8_t IncInstPrefix[] {0x48, 0xFF, 0x05}; // inc qword ptr [rip + (disp32 in next 4 bytes)]

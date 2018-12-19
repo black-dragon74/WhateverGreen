@@ -370,6 +370,9 @@ struct PACKED FramebufferCFL {
 	uint32_t fSliceCount;
 	uint32_t fEuCount;
 	uint32_t unk6[2];
+	/* For CFL EDID override */
+	uint8_t overrideEDIDIndex;
+	uint8_t overrideEDID[];
 };
 
 /* Not sure what it is, in CNL value2 is a pointer, and value1 could be size.  */
