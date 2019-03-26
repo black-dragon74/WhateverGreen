@@ -352,6 +352,7 @@ static constexpr Model dev679a[] {
 	{Model::DetectSub, 0x174b, 0x3000, 0x0000, "AMD Radeon HD 7950"},
 	{Model::DetectSub, 0x1043, 0x047e, 0x0000, "AMD Radeon HD 7950"},
 	{Model::DetectSub, 0x1043, 0x0424, 0x0000, "AMD Radeon HD 7950"},
+	{Model::DetectSub, 0x1462, 0x277c, 0x0000, "AMD Radeon R9 280"},
 	{Model::DetectSub, 0x174b, 0xa003, 0x0000, "AMD Radeon R9 280"},
 	{Model::DetectDef, 0x0000, 0x0000, 0x0000, "AMD Radeon HD 8950"}
 };
@@ -928,8 +929,11 @@ static BuiltinModel devIntel[] {
 	{ 0x5923, 0x0000, "Intel HD Graphics 635" },
 	{ 0x5926, 0x0000, "Intel Iris Plus Graphics 640" },
 	{ 0x5927, 0x0000, "Intel Iris Plus Graphics 650" },
+	{ 0x3E90, 0x3E92, "Intel UHD Graphics 610" },
 	{ 0x3E91, 0x0000, "Intel UHD Graphics 630" },
 	{ 0x3E92, 0x0000, "Intel UHD Graphics 630" },
+	{ 0x3E93, 0x3E92, "Intel UHD Graphics 610" },
+	{ 0x3E98, 0x0000, "Intel UHD Graphics 630" },
 	{ 0x3E9B, 0x0000, "Intel UHD Graphics 630" },
 	{ 0x3EA5, 0x0000, "Intel Iris Plus Graphics 655" },
 	{ 0x3EA0, 0x5916, "Intel UHD Graphics 620" },

@@ -1,5 +1,14 @@
 WhateverGreen Changelog
 =======================
+#### v1.2.7
+- Added more IGPU device-ids to detected list
+
+#### v1.2.6
+- Added `applbkl=0` boot argument to termporarily disable `AppleBacklight` patching code
+- Fixed AMD Verde CAIL injection logic
+- Fixed breaking backlight on Apple hardware, on laptops with AMD GPUs, and on 10.11 or earlier
+- Changed CFL backlight patches to enable by default on CFL drivers only (avoids issues with faux "KBL" 8xxx CPUs)
+
 #### v1.2.5
 - Added support for specifying `agpmod` in external GPU properties
 - Added fatal error on `agpmod=cfgmap` on 10.14 and newer, which had no effect since 10.13.4
@@ -10,6 +19,7 @@ WhateverGreen Changelog
 - Added NVIDIA HDMI enabling code for firmwares that disable it by default (thanks @Fraxul)
 - Enabled CFL backlight patches by default on laptops with CFL graphics
 - Fixed SNB IGPU HDMI automatic patching
+- Fix multiple AMD GPU support improperly handling configuration properties
 
 #### v1.2.4
 - Added platform list dumping to ioreg (at IOService:/IOResources/WhateverGreen), debug build only with -igfxfbdump

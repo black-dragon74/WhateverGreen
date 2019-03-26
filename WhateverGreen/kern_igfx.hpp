@@ -264,9 +264,21 @@ private:
 	bool blackScreenPatch {false};
 
 	/**
-	 *  Set to true if Coffee Lake backlight patch type required
+	 *  Coffee Lake backlight patch configuration options
 	 */
-	bool cflBacklightPatch {false};
+	enum class CoffeeBacklightPatch {
+		Auto = -1,
+		On = 1,
+		Off = 0
+	};
+
+	/**
+	 *  Set to On if Coffee Lake backlight patch type required
+	 *  - boot-arg igfxcflbklt=0/1 forcibly turns patch on or off (override)
+	 *	- IGPU property enable-cfl-backlight-fix turns patch on
+	 *  - laptop with CFL CPU and CFL IGPU drivers turns patch on
+	 */
+	CoffeeBacklightPatch cflBacklightPatch {CoffeeBacklightPatch::Off};
 
 	/**
 	 *  Set to true if PAVP code should be disabled
@@ -511,15 +523,6 @@ private:
 	 */
 	void writePlatformListData(const char *subKeyName);
 #endif
-
-	/**
-	 *  Erase coverage instruction prefix (like inc qword ptr[]), that causes function routing to fail
-	 *  We might want to make it Lilu API some day...
-	 *
-	 *  @param addr   address to valid instruction code
-	 *  @param count  amount of instructions to inspect
-	 */
-	void eraseCoverageInstPrefix(mach_vm_address_t addr, size_t count=5);
 
 	/**
 	 *  Patch data without changing kernel protection

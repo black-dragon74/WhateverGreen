@@ -78,7 +78,10 @@ void WEG::init() {
 	if (graphicsDisplayPolicyMod != AGDP_NONE)
 		lilu.onKextLoad(&kextAGDPolicy);
 
-	lilu.onKextLoad(&kextBacklight);
+	// Disable backlight patches if asked specifically.
+	PE_parse_boot_argn("applbkl", &appleBacklightPatch, sizeof(appleBacklightPatch));
+	if (appleBacklightPatch != APPLBKL_OFF)
+		lilu.onKextLoad(&kextBacklight);
 
 	igfx.init();
 	ngfx.init();
@@ -162,7 +165,13 @@ void WEG::processKernel(KernelPatcher &patcher) {
 					resetFramebuffer = FB_COPY;
 			}
 
+			// Note, disabled Optimus will make videoExternal 0, so this case checks for active IGPU only.
 			size_t extNum = devInfo->videoExternal.size();
+			if (appleBacklightPatch == APPLBKL_DETECT && (devInfo->videoBuiltin == nullptr || extNum > 0)) {
+				// Either a builtin IGPU is not available, or some external GPU is available.
+				kextBacklight.switchOff();
+			}
+
 			for (size_t i = 0; i < extNum; i++) {
 				auto &v = devInfo->videoExternal[i];
 				processExternalProperties(v.video, devInfo, v.vendor);
@@ -177,6 +186,9 @@ void WEG::processKernel(KernelPatcher &patcher) {
 
 			if (devInfo->managementEngine)
 				processManagementEngineProperties(devInfo->managementEngine);
+		} else if (appleBacklightPatch != APPLBKL_ON){
+			// Do not patch AppleBacklight on Apple HW, unless forced.
+			kextBacklight.switchOff();
 		}
 
 		igfx.processKernel(patcher, devInfo);
@@ -239,10 +251,8 @@ void WEG::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t ad
 		const uint8_t find[]    = {"F%uT%04x"};
 		const uint8_t replace[] = {"F%uTxxxx"};
 		KernelPatcher::LookupPatch patch = {&kextBacklight, find, replace, sizeof(find), 1};
-		if (getKernelVersion() >= KernelVersion::Sierra) {
-			DBGLOG("weg", "applying backlight patch");
-			patcher.applyLookupPatch(&patch);
-		}
+		DBGLOG("weg", "applying backlight patch");
+		patcher.applyLookupPatch(&patch);
 	}
 
 	if (igfx.processKext(patcher, index, address, size))
