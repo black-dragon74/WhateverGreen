@@ -252,6 +252,11 @@ private:
 	 */
 	void (*orgCflWriteRegister32)(void *, uint32_t, uint32_t) {nullptr};
 	void (*orgKblWriteRegister32)(void *, uint32_t, uint32_t) {nullptr};
+	
+	/**
+	 *  Original AppleIntelFramebufferController::ReadAUX function
+	 */
+	int (*orgReadAUX)(void *, void *, uint32_t, uint16_t, void *, void *) {nullptr};
 
 	/**
 	 *  Detected CPU generation of the host system
@@ -281,9 +286,19 @@ private:
 	CoffeeBacklightPatch cflBacklightPatch {CoffeeBacklightPatch::Off};
 
 	/**
+	 *  Patch the maximum link rate in the DPCD buffer read from the built-in display
+	 */
+	bool maxLinkRatePatch {false};
+	
+	/**
 	 *  Set to true if PAVP code should be disabled
 	 */
 	bool pavpDisablePatch {false};
+
+	/**
+	 *  Set to true if read descriptor patch should be enabled
+	 */
+	bool readDescriptorPatch {false};
 
 	/**
 	 *  Set to true to disable Metal support
@@ -395,11 +410,70 @@ private:
 	 *  Driver-requested backlight frequency obtained from BXT_BLC_PWM_FREQ1 write attempt at system start.
 	 */
 	uint32_t driverBacklightFrequency {};
+	
+	/**
+	 *  Represents the first 16 fields of the receiver capabilities defined in DPCD
+	 *
+	 *  Main Reference:
+	 *  - DisplayPort Specification Version 1.2
+	 *
+	 *  Side Reference:
+	 *  - struct intel_dp @ line 1073 in intel_drv.h (Linux 4.19 Kernel)
+	 *  - DP_RECEIVER_CAP_SIZE @ line 964 in drm_dp_helper.h
+	 */
+	struct DPCDCap16 // 16 bytes
+	{
+		// DPCD Revision (DP Config Version)
+		// Value: 0x10, 0x11, 0x12, 0x13, 0x14
+		uint8_t revision;
+		
+		// Maximum Link Rate
+		// Value: 0x1E (HBR3) 8.1 Gbps
+		//        0x14 (HBR2) 5.4 Gbps
+		//        0x0C (3_24) 3.24 Gbps
+		//        0x0A (HBR)  2.7 Gbps
+		//        0x06 (RBR)  1.62 Gbps
+		// Reference: 0x0C is used by Apple internally.
+		uint8_t maxLinkRate;
+		
+		// Maximum Number of Lanes
+		// Value: 0x1 (HBR2)
+		//        0x2 (HBR)
+		//        0x4 (RBR)
+		// Side Notes:
+		// (1) Bit 7 is used to indicate whether the link is capable of enhanced framing.
+		// (2) Bit 6 is used to indicate whether TPS3 is supported.
+		uint8_t maxLaneCount;
+		
+		// Maximum Downspread
+		uint8_t maxDownspread;
+		
+		// Other fields omitted in this struct
+		// Detailed information can be found in the specification
+		uint8_t others[12];
+	};
+	
+	/**
+	 *  User-specified maximum link rate value in the DPCD buffer
+	 *
+	 *  Default value is 0x14 (5.4 Gbps, HBR2) for 4K laptop display
+	 */
+	uint8_t maxLinkRate {0x14};
+	
+	/**
+	 *  ReadAUX wrapper to modify the maximum link rate value in the DPCD buffer
+	 */
+	static int wrapReadAUX(void *that, IORegistryEntry *framebuffer, uint32_t address, uint16_t length, void *buffer, void *displayPath);
 
 	/**
 	 *  PAVP session callback wrapper used to prevent freezes on incompatible PAVP certificates
 	 */
 	static IOReturn wrapPavpSessionCallback(void *intelAccelerator, int32_t sessionCommand, uint32_t sessionAppId, uint32_t *a4, bool flag);
+
+	/**
+	 *  Global page table read wrapper for Kaby Lake.
+	 */
+	static bool globalPageTableRead(void *hardwareGlobalPageTable, uint64_t a1, uint64_t &a2, uint64_t &a3);
 
 	/**
 	 *  DP ComputeLaneCount wrapper to report success on non-DP screens to avoid black screen

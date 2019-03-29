@@ -161,8 +161,36 @@ void IGFX::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 #endif
 
 		// Enable CFL EDID injection only on laptops and macOS Mojave and up!
-		if (checkKernelArgument("-edid")){
+		if (checkKernelArgument("-edid"))
 			cflEDIDInject = true;
+		
+		// Enable maximum link rate patch if the corresponding boot argument is found
+		if (checkKernelArgument("-igfxmlr"))
+			maxLinkRatePatch = true;
+		else
+			// Or if "enable-dpcd-max-link-rate-fix" is set in IGPU property
+			WIOKit::getOSDataValue(info->videoBuiltin, "enable-dpcd-max-link-rate-fix", maxLinkRatePatch);
+		
+		// Read the custom maximum link rate if present
+		if (WIOKit::getOSDataValue(info->videoBuiltin, "dpcd-max-link-rate", maxLinkRate)) {
+			// Guard: Verify the custom link rate before using it
+			switch (maxLinkRate) {
+				case 0x1E: // HBR3 8.1  Gbps
+				case 0x14: // HBR2 5.4  Gbps
+				case 0x0C: // 3_24 3.24 Gbps Used by Apple internally
+				case 0x0A: // HBR  2.7  Gbps
+				case 0x06: // RBR  1.62 Gbps
+					DBGLOG("igfx", "MLR: Found a valid custom maximum link rate value 0x%02x", maxLinkRate);
+					break;
+					
+				default:
+					// Invalid link rate value
+					SYSLOG("igfx", "MLR: Found an invalid custom maximum link rate value. Will use 0x14 as a fallback value.");
+					maxLinkRate = 0x14;
+					break;
+			}
+		} else {
+			DBGLOG("igfx", "MLR: No custom max link rate specified. Will use 0x14 as the default value.");
 		}
 		
 		// Enable CFL backlight patch on mobile CFL or if IGPU propery enable-cfl-backlight-fix is set
@@ -197,12 +225,15 @@ void IGFX::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 		PE_parse_boot_argn("igfxgl", &gl, sizeof(gl));
 		forceOpenGL = gl == 1;
 
+		// Starting from 10.14.4b1 KabyLake graphics randomly kernel panics on GPU usage
+		readDescriptorPatch = cpuGeneration == CPUInfo::CpuGeneration::KabyLake && getKernelVersion() >= KernelVersion::Mojave;
+
 		// Automatically enable HDMI -> DP patches
 		hdmiAutopatch = !applyFramebufferPatch && !connectorLessFrame && getKernelVersion() >= Yosemite && !checkKernelArgument("-igfxnohdmi");
 
 		// Disable kext patching if we have nothing to do.
-		switchOffFramebuffer = !blackScreenPatch && !applyFramebufferPatch && !dumpFramebufferToDisk && !dumpPlatformTable && !hdmiAutopatch && cflBacklightPatch == CoffeeBacklightPatch::Off;
-		switchOffGraphics = !pavpDisablePatch && !forceOpenGL && !moderniseAccelerator && !avoidFirmwareLoading;
+		switchOffFramebuffer = !blackScreenPatch && !applyFramebufferPatch && !dumpFramebufferToDisk && !dumpPlatformTable && !hdmiAutopatch && cflBacklightPatch == CoffeeBacklightPatch::Off && !maxLinkRatePatch;
+		switchOffGraphics = !pavpDisablePatch && !forceOpenGL && !moderniseAccelerator && !avoidFirmwareLoading && !readDescriptorPatch;
 	} else {
 		switchOffGraphics = switchOffFramebuffer = true;
 	}
@@ -246,6 +277,11 @@ bool IGFX::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t a
 
 			if (loadGuCFirmware)
 				loadIGScheduler4Patches(patcher, index, address, size);
+		}
+
+		if (readDescriptorPatch) {
+			KernelPatcher::RouteRequest request("__ZNK25IGHardwareGlobalPageTable4readEyRyS0_", globalPageTableRead);
+			patcher.routeMultiple(index, &request, 1, address, size);
 		}
 
 		return true;
@@ -308,6 +344,22 @@ bool IGFX::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t a
 				}
 			} else {
 				SYSLOG("igfx", "failed to find ReadRegister32 for cfl %d", bklCoffeeFb);
+			}
+		}
+		
+		if (maxLinkRatePatch) {
+			auto readAUXAddress = patcher.solveSymbol(index, "__ZN31AppleIntelFramebufferController7ReadAUXEP21AppleIntelFramebufferjtPvP21AppleIntelDisplayPath", address, size);
+			if (readAUXAddress) {
+				patcher.eraseCoverageInstPrefix(readAUXAddress);
+				orgReadAUX = reinterpret_cast<decltype(orgReadAUX)>(patcher.routeFunction(readAUXAddress, reinterpret_cast<mach_vm_address_t>(wrapReadAUX), true));
+				if (orgReadAUX) {
+					DBGLOG("igfx", "MLR: ReadAUX() has been routed successfully.");
+				} else {
+					patcher.clearError();
+					SYSLOG("igfx", "MLR: Failed to route ReadAUX().");
+				}
+			} else {
+				SYSLOG("igfx", "MLR: Failed to find ReadAUX().");
 			}
 		}
 		
@@ -379,6 +431,60 @@ IOReturn IGFX::wrapPavpSessionCallback(void *intelAccelerator, int32_t sessionCo
 	}
 
 	return FunctionCast(wrapPavpSessionCallback, callbackIGFX->orgPavpSessionCallback)(intelAccelerator, sessionCommand, sessionAppId, a4, flag);
+}
+
+bool IGFX::globalPageTableRead(void *hardwareGlobalPageTable, uint64_t address, uint64_t &physAddress, uint64_t &flags) {
+	uint64_t pageNumber = address >> PAGE_SHIFT;
+	uint64_t pageEntry = getMember<uint64_t *>(hardwareGlobalPageTable, 0x28)[pageNumber];
+	// PTE: Page Table Entry for 4KB Page, page 82:
+	// https://01.org/sites/default/files/documentation/intel-gfx-prm-osrc-kbl-vol05-memory_views.pdf.
+	physAddress = pageEntry & 0x7FFFFFF000ULL; // HAW-1:12, where HAW is 39.
+	flags = pageEntry & PAGE_MASK; // 11:0
+	// Relevant flag bits are as follows:
+	// 2 Ignored          Ignored (h/w does not care about values behind ignored registers)
+	// 1 R/W: Read/Write  Write permission rights. If 0, write permission not granted for requests with user-level privilege
+	//                    (and requests with supervisor-level privilege, if WPE=1 in the relevant extended-context-entry) to
+	//                    the memory region controlled by this entry. See a later section for access rights.
+	//                    GPU does not support Supervisor mode contexts.
+	// 0 P: Present       This bit must be “1” to point to a valid Page.
+	//
+	// In 10.14.4b1 the return condition changed from (flags & 7U) != 0 to (flags & 1U) != 0. The change makes good sense to me, but
+	// it results in crashes on 10.14.4b1 on many ASUS Z170 and Z270 boards with connector-less IGPU framebuffer.
+	// The reason for that is that __ZNK31IGHardwarePerProcessPageTable6422readDescriptorForRangeERK14IGAddressRangePPN10IGPagePool14PageDescriptorE
+	// unconditionally returns true but actually returns NULL PageDescriptor, which subsequently results in OSAddAtomic64(&this->counter)
+	// __ZN31IGHardwarePerProcessPageTable6421mapDescriptorForRangeERK14IGAddressRangePN10IGPagePool14PageDescriptorE writing to invalid address.
+	//
+	// Fault CR2: 0x0000000000000028, Error code: 0x0000000000000002, Fault CPU: 0x1, PL: 0, VF: 0
+	// 0xffffff821885b8f0 : 0xffffff801d3c7dc4 mach_kernel : _OSAddAtomic64 + 0x4
+	// 0xffffff821885b9e0 : 0xffffff7f9f3f1845 com.apple.driver.AppleIntelKBLGraphics :
+	//                      __ZN31IGHardwarePerProcessPageTable6421mapDescriptorForRangeERK14IGAddressRangePN10IGPagePool14PageDescriptorE + 0x6b
+	// 0xffffff821885ba20 : 0xffffff7f9f40a3c3 com.apple.driver.AppleIntelKBLGraphics :
+	//                      __ZN29IGHardwarePerProcessPageTable25synchronizePageDescriptorEPKS_RK14IGAddressRangeb + 0x51
+	// 0xffffff821885ba50 : 0xffffff7f9f40a36b com.apple.driver.AppleIntelKBLGraphics :
+	//                      __ZN29IGHardwarePerProcessPageTable15synchronizeWithIS_EEvPKT_RK14IGAddressRangeb + 0x37
+	// 0xffffff821885ba70 : 0xffffff7f9f3b1716 com.apple.driver.AppleIntelKBLGraphics : __ZN15IGMemoryManager19newPageTableForTaskEP11IGAccelTask + 0x98
+	// 0xffffff821885baa0 : 0xffffff7f9f40a716 com.apple.driver.AppleIntelKBLGraphics : __ZN11IGAccelTask15initWithOptionsEP16IntelAccelerator + 0x108
+	// 0xffffff821885bad0 : 0xffffff7f9f40a5f7 com.apple.driver.AppleIntelKBLGraphics : __ZN11IGAccelTask11withOptionsEP16IntelAccelerator + 0x31
+	// 0xffffff821885baf0 : 0xffffff7f9f3bfaf0 com.apple.driver.AppleIntelKBLGraphics : __ZN16IntelAccelerator17createUserGPUTaskEv + 0x30
+	// 0xffffff821885bb10 : 0xffffff7f9f2f7520 com.apple.iokit.IOAcceleratorFamily2 : __ZN14IOAccelShared24initEP22IOGraphicsAccelerator2P4task + 0x2e
+	// 0xffffff821885bb50 : 0xffffff7f9f30c157 com.apple.iokit.IOAcceleratorFamily2 : __ZN22IOGraphicsAccelerator212createSharedEP4task + 0x33
+	// 0xffffff821885bb80 : 0xffffff7f9f2faa95 com.apple.iokit.IOAcceleratorFamily2 : __ZN24IOAccelSharedUserClient211sharedStartEv + 0x2b
+	// 0xffffff821885bba0 : 0xffffff7f9f401ca2 com.apple.driver.AppleIntelKBLGraphics : __ZN23IGAccelSharedUserClient11sharedStartEv + 0x16
+	// 0xffffff821885bbc0 : 0xffffff7f9f2f8aaa com.apple.iokit.IOAcceleratorFamily2 : __ZN24IOAccelSharedUserClient25startEP9IOService + 0x9c
+	// 0xffffff821885bbf0 : 0xffffff7f9f30ba3c com.apple.iokit.IOAcceleratorFamily2 : __ZN22IOGraphicsAccelerator213newUserClientEP4taskPvjPP12IOUserClient + 0x43e
+	// 0xffffff821885bc80 : 0xffffff801d42a040 mach_kernel : __ZN9IOService13newUserClientEP4taskPvjP12OSDictionaryPP12IOUserClient + 0x30
+	// 0xffffff821885bcd0 : 0xffffff801d48ef9a mach_kernel : _is_io_service_open_extended + 0x10a
+	// 0xffffff821885bd30 : 0xffffff801ce96b52 mach_kernel : _iokit_server_routine + 0x58d2
+	// 0xffffff821885bd80 : 0xffffff801cdb506c mach_kernel : _ipc_kobject_server + 0x12c
+	// 0xffffff821885bdd0 : 0xffffff801cd8fa91 mach_kernel : _ipc_kmsg_send + 0xd1
+	// 0xffffff821885be50 : 0xffffff801cda42fe mach_kernel : _mach_msg_overwrite_trap + 0x3ce
+	// 0xffffff821885bef0 : 0xffffff801cec3e87 mach_kernel : _mach_call_munger64 + 0x257
+	// 0xffffff821885bfa0 : 0xffffff801cd5d2c6 mach_kernel : _hndl_mach_scall64 + 0x16
+	//
+	// Even so the change makes good sense to me, and most likely the real bug is elsewhere. The change workarounds the issue by also checking
+	// for the W (writeable) bit in addition to P (present). Presumably this works because some code misuses ::read method to iterate
+	// over page table instead of obtaining valid mapped physical address.
+	return (flags & 3U) != 0;
 }
 
 bool IGFX::wrapComputeLaneCount(void *that, void *timing, uint32_t bpp, int32_t availableLanes, int32_t *laneCount) {
@@ -472,6 +578,65 @@ bool IGFX::wrapAcceleratorStart(IOService *that, IOService *provider) {
 		that->setName("IntelAccelerator");
 
 	return FunctionCast(wrapAcceleratorStart, callbackIGFX->orgAcceleratorStart)(that, provider);
+}
+
+/**
+ *  ReadAUX wrapper to modify the maximum link rate valud in the DPCD buffer
+ */
+int IGFX::wrapReadAUX(void *that, IORegistryEntry *framebuffer, uint32_t address, uint16_t length, void *buffer, void *displayPath) {
+	
+	//
+	// Abstract:
+	//
+	// Several fields in an `AppleIntelFramebuffer` instance are left zeroed because of
+	// an invalid value of maximum link rate reported by DPCD of the builtin display.
+	//
+	// One of those fields, namely the number of lanes, is later used as a divisor during
+	// the link training, resulting in a kernel panic triggered by a divison-by-zero.
+	//
+	// DPCD are retrieved from the display via a helper function named ReadAUX().
+	// This wrapper function checks whether the driver is reading receiver capabilities
+	// from DPCD of the builtin display and then provides a custom maximum link rate value,
+	// so that we don't need to update the binary patch on each system update.
+	//
+	// If you are interested in the story behind this fix, take a look at my blog posts.
+	// Phase 1: https://www.firewolf.science/2018/10/coffee-lake-intel-uhd-graphics-630-on-macos-mojave-a-compromise-solution-to-the-kernel-panic-due-to-division-by-zero-in-the-framebuffer-driver/
+	// Phase 2: https://www.firewolf.science/2018/11/coffee-lake-intel-uhd-graphics-630-on-macos-mojave-a-nearly-ultimate-solution-to-the-kernel-panic-due-to-division-by-zero-in-the-framebuffer-driver/
+	
+	// Call the original ReadAUX() function to read from DPCD
+	int retVal = callbackIGFX->orgReadAUX(that, framebuffer, address, length, buffer, displayPath);
+	
+	// Guard: Check the DPCD register address
+	// The first 16 fields of the receiver capabilities reside at 0x0 (DPCD Register Address)
+	if (address != 0)
+		return retVal;
+	
+	// The driver tries to read the first 16 bytes from DPCD
+	// Get the current framebuffer index (An UInt32 field at 0x1dc in a framebuffer instance)
+	// We read the value of "IOFBDependentIndex" instead of accessing that field directly
+	auto index = OSDynamicCast(OSNumber, framebuffer->getProperty("IOFBDependentIndex"));
+	
+	// Guard: Should be able to retrieve the index from the registry
+	if (!index) {
+		SYSLOG("igfx", "MLR: wrapReadAUX: Failed to read the current framebuffer index.");
+		return retVal;
+	}
+	
+	// Guard: Check the framebuffer index
+	// By default, FB 0 refers the builtin display
+	if (index->unsigned32BitValue() != 0)
+		// The driver is reading DPCD for an external display
+		return retVal;
+	
+	// The driver tries to read the receiver capabilities for the builtin display
+	auto caps = reinterpret_cast<DPCDCap16*>(buffer);
+	
+	// Set the custom maximum link rate value
+	caps->maxLinkRate = callbackIGFX->maxLinkRate;
+	
+	DBGLOG("igfx", "MLR: wrapReadAUX: Maximum link rate 0x%02x has been set in the DPCD buffer.", caps->maxLinkRate);
+	
+	return retVal;
 }
 
 void IGFX::wrapCflWriteRegister32(void *that, uint32_t reg, uint32_t value) {
