@@ -811,7 +811,7 @@ private:
 		 *
 		 *  @param instance A nullable LSPCON driver instance
 		 */
-		static void deleter(LSPCON *instance NONNULL) { delete instance; }
+		static void deleter(LSPCON *instance) { delete instance; }
 		
 		/**
 		 *  Probe the onboard LSPCON chip
