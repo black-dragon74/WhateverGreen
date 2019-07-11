@@ -595,6 +595,11 @@ static constexpr Model dev6863[] {
 	{Model::DetectDef, 0x0000, 0x0000, 0x0000, "Radeon Vega Frontier Edition"}
 };
 
+static constexpr Model dev6868[] {
+	{Model::DetectDef, 0x0000, 0x0000, 0x0000, "Radeon Pro WX 8200"},
+	{Model::DetectDef, 0x1002, 0x0a0c, 0x0000, "Radeon Pro WX 8200"}
+};
+
 static constexpr Model dev687f[] {
 	{Model::DetectRev, 0x0000, 0x0000, 0x00c0, "Radeon RX Vega 64"},
 	{Model::DetectRev, 0x0000, 0x0000, 0x00c1, "Radeon RX Vega 64"},
@@ -807,6 +812,7 @@ static constexpr DevicePair devices[] {
 	{0x6841, dev6841, arrsize(dev6841)},
 	{0x6861, dev6861, arrsize(dev6861)},
 	{0x6863, dev6863, arrsize(dev6863)},
+	{0x6868, dev6868, arrsize(dev6868)},	
 	{0x687f, dev687f, arrsize(dev687f)},
 	{0x6898, dev6898, arrsize(dev6898)},
 	{0x6899, dev6899, arrsize(dev6899)},
@@ -941,7 +947,7 @@ static BuiltinModel devIntel[] {
 	{ 0x3E98, 0x0000, "Intel UHD Graphics 630" },
 	{ 0x3E9B, 0x0000, "Intel UHD Graphics 630" },
 	{ 0x3EA5, 0x0000, "Intel Iris Plus Graphics 655" },
-	{ 0x3EA0, 0x5916, "Intel UHD Graphics 620" },
+	{ 0x3EA0, 0x3EA5, "Intel UHD Graphics 620" },
 	{ 0x87C0, 0x0000, "Intel UHD Graphics 617" },
 	// Reserved/unused/generic Kaby Lake / Coffee Lake },
 };
