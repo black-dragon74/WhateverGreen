@@ -355,6 +355,11 @@ private:
 	 */
 	bool dumpFramebufferToDisk {false};
 
+    /**
+     * Ensure each modeset is a complete modeset.
+     */
+	bool forceCompleteModeset {false};
+
 	/**
 	 *  Perform platform table dump to ioreg
 	 */
@@ -493,6 +498,11 @@ private:
 	 *  ReadAUX wrapper to modify the maximum link rate value in the DPCD buffer
 	 */
 	static IOReturn wrapReadAUX(void *that, IORegistryEntry *framebuffer, uint32_t address, uint16_t length, void *buffer, void *displayPath);
+
+	/**
+	 * See function definition for explanation
+	 */
+	static bool wrapHwRegsNeedUpdate(void);
 	
 	/**
 	 *  Reflect the `AppleIntelFramebufferController::CRTCParams` struct
