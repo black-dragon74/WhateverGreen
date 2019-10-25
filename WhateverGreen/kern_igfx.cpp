@@ -209,9 +209,9 @@ void IGFX::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 			for (size_t index = 0; index < arrsize(lspcons); index++) {
 				bzero(name, sizeof(name));
 				snprintf(name, sizeof(name), "framebuffer-con%lu-has-lspcon", index);
-				WIOKit::getOSDataValue(info->videoBuiltin, name, lspcons[index].hasLSPCON);
+				(void)WIOKit::getOSDataValue(info->videoBuiltin, name, lspcons[index].hasLSPCON);
 				snprintf(name, sizeof(name), "framebuffer-con%lu-preferred-lspcon-mode", index);
-				WIOKit::getOSDataValue(info->videoBuiltin, name, pmode);
+				(void)WIOKit::getOSDataValue(info->videoBuiltin, name, pmode);
 				// Assuming PCON mode if invalid mode value (i.e. > 1) specified by the user
 				lspcons[index].preferredMode = LSPCON::parseMode(pmode != 0);
 			}
@@ -280,8 +280,8 @@ void IGFX::processKernel(KernelPatcher &patcher, DeviceInfo *info) {
 		PE_parse_boot_argn("igfxgl", &gl, sizeof(gl));
 		forceOpenGL = gl == 1;
 
-		// Starting from 10.14.4b1 KabyLake graphics randomly kernel panics on GPU usage
-		readDescriptorPatch = cpuGeneration >= CPUInfo::CpuGeneration::KabyLake && getKernelVersion() >= KernelVersion::Mojave;
+		// Starting from 10.14.4b1 Skylake+ graphics randomly kernel panics on GPU usage
+		readDescriptorPatch = cpuGeneration >= CPUInfo::CpuGeneration::Skylake && getKernelVersion() >= KernelVersion::Mojave;
 
 		// Automatically enable HDMI -> DP patches
 		hdmiAutopatch = !applyFramebufferPatch && !connectorLessFrame && getKernelVersion() >= Yosemite && !checkKernelArgument("-igfxnohdmi");
@@ -720,8 +720,11 @@ bool IGFX::wrapHwRegsNeedUpdate(void *controller, IOService *framebuffer, void *
 	// somewhere deeper.
 
 	// Either this framebuffer is in override list
-	if (callbackIGFX->forceCompleteModeset.customised)
-		return callbackIGFX->forceCompleteModeset.inList(framebuffer);
+	if (callbackIGFX->forceCompleteModeset.customised) {
+		return callbackIGFX->forceCompleteModeset.inList(framebuffer)
+		|| FunctionCast(callbackIGFX->wrapHwRegsNeedUpdate, callbackIGFX->orgHwRegsNeedUpdate)(
+			controller, framebuffer, displayPath, crtParams, detailedInfo);
+	}
 
 	// FIXME:
 	// A similar function exists in Skylake:
@@ -729,13 +732,12 @@ bool IGFX::wrapHwRegsNeedUpdate(void *controller, IOService *framebuffer, void *
 	// However, it does not use framebuffer argument and thus the compiler does not pass it to the target function.
 	// Since the fix is not very beneficial for Skylake, for the time being we do not care fixing it.
 
-	// Or it is built-in, as indicated by AppleBacklightDisplay setting property "built-in" for
+	// Or it is not built-in, as indicated by AppleBacklightDisplay setting property "built-in" for
 	// this framebuffer.
 	// Note we need to check this at every invocation, as this property may reappear
-	if (framebuffer->getProperty("built-in"))
-		return false;
-
-	return FunctionCast(callbackIGFX->wrapHwRegsNeedUpdate, callbackIGFX->orgHwRegsNeedUpdate)(controller, framebuffer, displayPath, crtParams, detailedInfo);
+	return !framebuffer->getProperty("built-in")
+		|| FunctionCast(callbackIGFX->wrapHwRegsNeedUpdate, callbackIGFX->orgHwRegsNeedUpdate)(
+		controller, framebuffer, displayPath, crtParams, detailedInfo);
 }
 
 /**
@@ -905,7 +907,7 @@ int IGFX::wrapComputeHdmiP0P1P2(void *that, uint32_t pixelClock, void *displayPa
 	static constexpr uint64_t centralFrequencies[3] = {8400000000ULL, 9000000000ULL, 9600000000ULL};
 
 	// Calculate the AFE clock
-	uint64_t afeClock = pixelClock * 5;
+	uint64_t afeClock = static_cast<uint64_t>(pixelClock) * 5;
 
 	// Prepare the context for probing P0, P1 and P2
 	ProbeContext context {};
@@ -1461,7 +1463,7 @@ bool IGFX::wrapGetOSInformation(void *that) {
 #ifdef DEBUG
 	if (callbackIGFX->dumpFramebufferToDisk) {
 		char name[64];
-		snprintf(name, sizeof(name), "/AppleIntelFramebuffer_%d_%d.%d", callbackIGFX->cpuGeneration, getKernelVersion(), getKernelMinorVersion());
+		snprintf(name, sizeof(name), "/var/log/AppleIntelFramebuffer_%d_%d.%d", callbackIGFX->cpuGeneration, getKernelVersion(), getKernelMinorVersion());
 		FileIO::writeBufferToFile(name, callbackIGFX->framebufferStart, callbackIGFX->framebufferSize);
 		SYSLOG("igfx", "dumping framebuffer information to %s", name);
 	}
@@ -1780,7 +1782,7 @@ bool IGFX::loadPatchesFromDevice(IORegistryEntry *igpu, uint32_t currentFramebuf
 		snprintf(name, sizeof(name), "framebuffer-patch%lu-replace", i);
 		auto framebufferPatchReplace = OSDynamicCast(OSData, igpu->getProperty(name));
 		snprintf(name, sizeof(name), "framebuffer-patch%lu-count", i);
-		WIOKit::getOSDataValue(igpu, name, framebufferPatchCount);
+		(void)WIOKit::getOSDataValue(igpu, name, framebufferPatchCount);
 
 		if (!framebufferPatchFind || !framebufferPatchReplace)
 			continue;

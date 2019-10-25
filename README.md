@@ -1,7 +1,7 @@
 WhateverGreen
 =============
 
-[![Build Status](https://travis-ci.org/acidanthera/WhateverGreen.svg?branch=master)](https://travis-ci.org/acidanthera/WhateverGreen) [![Scan Status](https://scan.coverity.com/projects/16177/badge.svg?flat=1)](https://scan.coverity.com/projects/16177)
+[![Build Status](https://travis-ci.com/acidanthera/WhateverGreen.svg?branch=master)](https://travis-ci.com/acidanthera/WhateverGreen) [![Scan Status](https://scan.coverity.com/projects/16177/badge.svg?flat=1)](https://scan.coverity.com/projects/16177)
 
 
 [Lilu](https://github.com/acidanthera/Lilu) plugin providing patches to select GPUs on macOS. Requires Lilu 1.2.5 or newer.
@@ -53,7 +53,7 @@ Read [FAQs](https://github.com/acidanthera/WhateverGreen/blob/master/Manual/) an
 - `igfxgl=0` to disable Metal support on Intel.
 - `-igfxnohdmi` to disable DP to HDMI conversion patches for digital sound.
 - `-cdfon` (and `enable-hdmi20` property) to enable HDMI 2.0 patches.
-- `-igfxdump` to dump IGPU framebuffer kext to `/AppleIntelFramebuffer_X_Y` (available in DEBUG binaries).
+- `-igfxdump` to dump IGPU framebuffer kext to `/var/log/AppleIntelFramebuffer_X_Y` (available in DEBUG binaries).
 - `-igfxfbdump` to dump native and patched framebuffer table to ioreg at IOService:/IOResources/WhateverGreen
 - `igfxcflbklt=1` boot argument (and `enable-cfl-backlight-fix` property) to enable CFL backlight patch
 - `applbkl=0` boot argument to disable AppleBacklight.kext patches for IGPU. In case of custom AppleBacklight profile- [read here.](https://github.com/acidanthera/WhateverGreen/blob/master/Manual/FAQ.OldPlugins.en.md)
@@ -61,9 +61,9 @@ Read [FAQs](https://github.com/acidanthera/WhateverGreen/blob/master/Manual/) an
 - `-igfxhdmidivs` boot argument (and `enable-hdmi-dividers-fix` property) to fix the infinite loop on establishing Intel HDMI connections with a higher pixel clock rate on SKL, KBL and CFL platforms.
 - `-igfxlspcon` boot argument (and `enable-lspcon-support` property) to enable the driver support for onboard LSPCON chips. [Read the manual](https://github.com/acidanthera/WhateverGreen/blob/master/Manual/FAQ.IntelHD.en.md)
 - `-igfxi2cdbg` boot argument to enable verbose output in I2C-over-AUX transactions (only for debugging purposes).
-- `igfxfcmsfbs` boot argument (`complete-modeset-framebuffers` device property) to specify
-indices of framebuffers for which complete modeset must be enforced. Each index is a byte in
-a 64-bit word; for example, value `0x010203` specifies framebuffers 1, 2, 3. If a framebuffer is
+- `igfxfcmsfbs=` boot argument (`complete-modeset-framebuffers` device property) to specify
+indices of connectors for which complete modeset must be enforced. Each index is a byte in
+a 64-bit word; for example, value `0x010203` specifies connectors 1, 2, 3. If a connector is
 not in the list, the driver's logic is used to determine whether complete modeset is needed. Pass `-1` to disable.
 
 #### Credits

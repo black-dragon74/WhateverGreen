@@ -1,5 +1,16 @@
 WhateverGreen Changelog
 =======================
+#### v1.3.4
+- Added support for disabled AppleGraphicsDevicePolicy in AMD drivers on 10.15.1
+- Added basic support for `-radcfg` and `-radgl` on AMD Navi GPUs
+
+#### v1.3.3
+- Rework backlight panel info injection to fix Mac issues
+
+#### v1.3.2
+- Added more GPUs for detection
+- Enable IGPU graphics kernel panic workaround on 10.14.4+ on SKL
+
 #### v1.3.1
 - Fixed an issue that LSPCON driver fails to set the mode after the adapter power is off, i.e. sleep/wake up cycle.
 - Unified release archive names
