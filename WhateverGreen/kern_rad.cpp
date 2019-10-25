@@ -168,6 +168,13 @@ bool RAD::processKext(KernelPatcher &patcher, size_t index, mach_vm_address_t ad
 
 	if (kextRadeonSupport.loadIndex == index) {
 		processConnectorOverrides(patcher, address, size, true);
+
+		if (getKernelVersion() > KernelVersion::Mojave ||
+			(getKernelVersion() == KernelVersion::Mojave && getKernelMinorVersion() >= 5)) {
+			KernelPatcher::RouteRequest request("__ZN13ATIController8TestVRAME13PCI_REG_INDEXb", doNotTestVram);
+			patcher.routeMultiple(index, &request, 1, address, size);
+		}
+
 		return true;
 	}
 
@@ -256,6 +263,7 @@ void RAD::process24BitOutput(KernelPatcher &patcher, KernelPatcher::KextInfo &in
 		}
 	} else {
 		SYSLOG("rad", "failed to find BITS_PER_COMPONENT");
+		patcher.clearError();
 	}
 
 	DBGLOG("rad", "fixing pixel types");
@@ -455,7 +463,7 @@ void RAD::mergeProperties(OSDictionary *props, const char *prefix, IOService *pr
 	} else {
 		SYSLOG("rad", "prop merge failed to get properties");
 	}
-	
+
 	if (!strcmp(prefix, "CAIL,")) {
 		for (size_t i = 0; i < arrsize(powerGatingFlags); i++) {
 			if (powerGatingFlags[i] && props->getObject(powerGatingFlags[i])) {
@@ -553,17 +561,17 @@ void RAD::autocorrectConnectors(uint8_t *baseAddr, AtomDisplayObjectPath *displa
 			DBGLOG("rad", "autocorrectConnectors not encoder %X at %u", displayPaths[i].usGraphicObjIds, i);
 			continue;
 		}
-		
+
 		uint8_t txmit = 0, enc = 0;
 		if (!getTxEnc(displayPaths[i].usGraphicObjIds, txmit, enc))
 			continue;
-		
+
 		uint8_t sense = getSenseID(baseAddr + connectorObjects[i].usRecordOffset);
 		if (!sense) {
 			DBGLOG("rad", "autocorrectConnectors failed to detect sense for %u connector", i);
 			continue;
 		}
-		
+
 		DBGLOG("rad", "autocorrectConnectors found txmit %02X enc %02X sense %02X for %u connector", txmit, enc, sense, i);
 
 		autocorrectConnector(getConnectorID(displayPaths[i].usConnObjectId), sense, txmit, enc, connectors, sz);
@@ -578,7 +586,7 @@ void RAD::autocorrectConnector(uint8_t connector, uint8_t sense, uint8_t txmit, 
 	// in AtiAtomBiosDce60::getPropertiesForConnectorObject for DVI DL and TITFP513 this value is conjuncted with 0xCF,
 	// which makes it wrong: 0x10 -> 0, 0x11 -> 1. As a result one gets black screen when connecting multiple displays.
 	// getPropertiesForEncoderObject takes usGraphicObjIds and getPropertiesForConnectorObject takes usConnObjectId
-	
+
 	if (callbackRAD->dviSingleLink) {
 		if (connector != CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_I &&
 			connector != CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_D &&
@@ -586,7 +594,7 @@ void RAD::autocorrectConnector(uint8_t connector, uint8_t sense, uint8_t txmit, 
 			DBGLOG("rad", "autocorrectConnector found unsupported connector type %02X", connector);
 			return;
 		}
-		
+
 		auto fixTransmit = [](auto &con, uint8_t idx, uint8_t sense, uint8_t txmit) {
 			if (con.sense == sense) {
 				if (con.transmitter != txmit && (con.transmitter & 0xCF) == con.transmitter) {
@@ -598,7 +606,7 @@ void RAD::autocorrectConnector(uint8_t connector, uint8_t sense, uint8_t txmit, 
 			}
 			return false;
 		};
-		
+
 		bool isModern = RADConnectors::modern();
 		for (uint8_t j = 0; j < sz; j++) {
 			if (isModern) {
@@ -625,7 +633,7 @@ void RAD::reprioritiseConnectors(const uint8_t *senseList, uint8_t senseNum, RAD
 		RADConnectors::ConnectorVGA
 	};
 	static constexpr uint8_t typeNum {static_cast<uint8_t>(arrsize(typeList))};
-	
+
 	bool isModern = RADConnectors::modern();
 	uint16_t priCount = 1;
 	// Automatically detected connectors have equal priority (0), which often results in black screen
@@ -651,7 +659,7 @@ void RAD::reprioritiseConnectors(const uint8_t *senseList, uint8_t senseNum, RAD
 				}
 				return false;
 			};
-			
+
 			if ((isModern && reorder((&connectors->modern)[j])) ||
 				(!isModern && reorder((&connectors->legacy)[j])))
 				break;
@@ -753,7 +761,7 @@ uint32_t RAD::wrapGetConnectorsInfoV1(void *that, RADConnectors::Connector *conn
 	} else {
 		DBGLOG("rad", "getConnectorsInfoV1 failed %X or undefined %d", code, props == nullptr);
 	}
-	
+
 	return code;
 }
 
@@ -783,14 +791,14 @@ uint32_t RAD::wrapLegacyGetConnectorsInfo(void *that, RADConnectors::Connector *
 
 uint32_t RAD::wrapTranslateAtomConnectorInfoV1(void *that, RADConnectors::AtomConnectorInfo *info, RADConnectors::Connector *connector) {
 	uint32_t code = FunctionCast(wrapTranslateAtomConnectorInfoV1, callbackRAD->orgTranslateAtomConnectorInfoV1)(that, info, connector);
-	
+
 	if (code == 0 && info && connector) {
 		RADConnectors::print(connector, 1);
-		
+
 		uint8_t sense = getSenseID(info->i2cRecord);
 		if (sense) {
 			DBGLOG("rad", "translateAtomConnectorInfoV1 got sense id %02X", sense);
-			
+
 			// We need to extract usGraphicObjIds from info->hpdRecord, which is of type ATOM_SRC_DST_TABLE_FOR_ONE_OBJECT:
 			// struct ATOM_SRC_DST_TABLE_FOR_ONE_OBJECT {
 			//   uint8_t ucNumberOfSrc;
@@ -799,7 +807,7 @@ uint32_t RAD::wrapTranslateAtomConnectorInfoV1(void *that, RADConnectors::AtomCo
 			//   uint16_t usDstObjectID[ucNumberOfDst];
 			// };
 			// The value we need is in usSrcObjectID. The structure is byte-packed.
-			
+
 			uint8_t ucNumberOfSrc = info->hpdRecord[0];
 			for (uint8_t i = 0; i < ucNumberOfSrc; i++) {
 				auto usSrcObjectID = *reinterpret_cast<uint16_t *>(info->hpdRecord + sizeof(uint8_t) + i * sizeof(uint16_t));
@@ -811,22 +819,22 @@ uint32_t RAD::wrapTranslateAtomConnectorInfoV1(void *that, RADConnectors::AtomCo
 					break;
 				}
 			}
-			
-			
+
+
 		} else {
 			DBGLOG("rad", "translateAtomConnectorInfoV1 failed to detect sense for translated connector");
 		}
 	}
-	
+
 	return code;
 }
 
 uint32_t RAD::wrapTranslateAtomConnectorInfoV2(void *that, RADConnectors::AtomConnectorInfo *info, RADConnectors::Connector *connector) {
 	uint32_t code = FunctionCast(wrapTranslateAtomConnectorInfoV2, callbackRAD->orgTranslateAtomConnectorInfoV2)(that, info, connector);
-	
+
 	if (code == 0 && info && connector) {
 		RADConnectors::print(connector, 1);
-		
+
 		uint8_t sense = getSenseID(info->i2cRecord);
 		if (sense) {
 			DBGLOG("rad", "translateAtomConnectorInfoV2 got sense id %02X", sense);
@@ -837,7 +845,7 @@ uint32_t RAD::wrapTranslateAtomConnectorInfoV2(void *that, RADConnectors::AtomCo
 			DBGLOG("rad", "translateAtomConnectorInfoV2 failed to detect sense for translated connector");
 		}
 	}
-	
+
 	return code;
 }
 
@@ -876,4 +884,16 @@ IOReturn RAD::findProjectByPartNumber(IOService *ctrl, void *properties) {
 	// 113-4E353BU, 113-4E3531U, 113-C94002A1XTA
 	// Despite this looking sane, at least with Sapphire 113-4E353BU-O50 (RX 580) these framebuffers break connectors.
 	return kIOReturnNotFound;
+}
+
+bool RAD::doNotTestVram(IOService *ctrl, uint32_t reg, bool retryOnFail) {
+	// Based on vladie's patch description:
+	// TestVRAM fills memory with 0xaa55aa55 bytes (it's magenta pixels visible onscreen),
+	// and it tries to test too much of address space, writing this bytes to framebuffer memory.
+	// If you have verbose mode enabled (as i have), there is a possibility that framebuffer
+	// will scroll during this test, and TestVRAM will write 0xaa55aa55, but read 0x00000000
+	// (because magenta-colored pixels are scrolled up) causing kernel panic.
+	//
+	// Here we just do not do video memory testing for simplicity.
+	return true;
 }
